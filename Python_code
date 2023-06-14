@@ -1,0 +1,12 @@
+## ADd Two Number 
+
+x = input("Type a number: ")
+y = input("Type another number: ")
+sum = int(x) + int(y)
+print("The sum is: ", sum)
+
+## multiply two number 
+x = input("please enter number : ")
+Y = input("please enter number : ")
+pt = int(x) * int(Y)
+print("The sum is: ", pt)
