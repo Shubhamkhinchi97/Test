@@ -1,0 +1,80 @@
+#Random Numbers in NumPy  (Random number does NOT mean a different number every time. Random means something that can not be predicted logically.)
+
+#Generate Random Number
+from numpy import random
+x = random.randint(100)
+print(x)
+
+#Generate a random float from 0 to 1:
+from numpy import random
+x = random.rand()
+print(x)
+
+
+#Generate a 1-D array containing 5 random integers from 0 to 100:
+from numpy import random
+x=random.randint(100, size=(5))
+print(x)
+
+#Generate a 2-D array with 3 rows, each row containing 5 random integers from 0 to 100:
+from numpy import random
+x = random.randint(100, size=(3, 5))
+print(x)
+
+#Generate a 1-D array containing 5 random floats:
+from numpy import random
+x = random.rand(5)
+print(x)
+
+from numpy import random
+x = random.rand(3,5)
+print(x)
+
+
+#Generate Random Number From Array (The choice() method allows you to generate a random value based on an array of values.The choice() method takes an array as a parameter and randomly returns one of the values.)
+from numpy import random
+x = random.choice([3, 5, 7, 9])
+print(x)
+
+from numpy import random
+x = random.choice([3, 5, 7, 9], size=(3, 5))
+print(x)
+
+
+##Random Data Distribution  (Data Distribution is a list of all possible values, and how often each value occurs.Such lists are important when working with statistics and data science.)
+
+#Generate a 1-D array containing 100 values, where each value has to be 3, 5, 7 or 9.
+#The probability for the value to be 3 is set to be 0.1
+#The probability for the value to be 5 is set to be 0.3
+#The probability for the value to be 7 is set to be 0.6
+#The probability for the value to be 9 is set to be 0
+
+from numpy import random
+x = random.choice([3, 5, 7, 9], p=[0.1, 0.3, 0.6, 0.0], size=(100))
+print(x)
+
+
+#Same example as above, but return a 2-D array with 3 rows, each containing 5 values.
+from numpy import random
+x = random.choice([3, 5, 7, 9], p=[0.1, 0.3, 0.6, 0.0], size=(3, 5))
+print(x)    
+
+
+
+#Random Permutations
+
+#Random Permutations of Elements
+#A permutation refers to an arrangement of elements. e.g. [3, 2, 1] is a permutation of [1, 2, 3] and vice-versa.
+#The NumPy Random module provides two methods for this: shuffle() and permutation().
+
+from numpy import random
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5])
+random.shuffle(arr)
+print(arr)
+
+#Generating Permutation of Arrays
+from numpy import random
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5])
+print(random.permutation(arr))
