@@ -164,6 +164,244 @@ print(arr.dtype)
 
 
 #NumPy Array Copy vs View
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5])
+x = arr.copy()
+arr[0] = 42
+print(arr)
+print(x)
 
 
---new updte
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5])
+x = arr.view()
+arr[0] = 42
+print(arr)
+print(x)
+
+
+#NumPy Array Shape
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5])
+print (arr.shape)
+
+
+
+import numpy as np
+arr = np.array([[[1, 2,32],[45,45,2]],[[3, 4, 5],[45,65,87]]])
+print (arr.shape)
+
+
+#NumPy Array Reshaping  (The outermost dimension will have 2 arrays that contains 3 arrays, each with 2 elements:)
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+newarr = arr.reshape(4, 3)
+print(newarr)
+
+
+#Flattening the arrays
+import numpy as np
+arr = np.array([[1, 2, 3], [4, 5, 6]])
+newarr = arr.reshape(-1)
+print(newarr)
+
+#NumPy Array Iterating (Iterating means going through elements one by one. As we deal with multi-dimensional arrays in numpy, we can do this using basic for loop of python.)
+import numpy as np
+arr = np.array([[1, 2, 3], [4, 5, 6]])
+
+for x in arr:
+    print (x)
+    
+    
+#Iterate on each scalar element of the 2-D array:
+
+import numpy as np
+arr = np.array([[1, 2, 3], [4, 5, 6]])
+for x in arr:
+  for y in x:
+    print(y)
+    
+  
+#Iterating Arrays Using nditer()    
+import numpy as np
+arr = np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+for x in np.nditer(arr):
+  print(x)    
+  
+  
+#Iterating Array With Different Data Types
+import numpy as np
+arr = np.array([1, 2, 3])
+for x in np.nditer(arr, flags=['buffered'], op_dtypes=['S']):
+  print(x)  
+  
+
+#Iterating With Different Step Size
+import numpy as np
+arr = np.array([[1, 2, 3, 4], [5, 6, 7, 8]])
+for x in np.nditer(arr[:, ::2]):
+  print(x)  
+  
+  
+  
+#Enumerated Iteration Using ndenumerate()
+import numpy as np
+arr = np.array([1, 2, 3])
+for idx, x in np.ndenumerate(arr):
+  print(idx, x)  
+  
+  
+import numpy as np
+arr = np.array([[1, 2, 3, 4], [5, 6, 7, 8]])
+for idx, x in np.ndenumerate(arr):
+  print(idx, x)  
+  
+  
+  
+##    NumPy Joining Array
+import numpy as np
+arr1 = np.array([1, 2, 3])
+arr2 = np.array([4, 5, 6])
+arr = np.concatenate((arr1, arr2))
+print(arr)
+
+#Join two 2-D arrays along rows (axis=1):
+import numpy as np
+arr1 = np.array([[1, 2], [3, 4]])
+arr2 = np.array([[5, 6], [7, 8]])
+arr = np.concatenate((arr1, arr2), axis=1)
+print(arr)
+
+
+#Joining Arrays Using Stack Functions
+import numpy as np
+arr1 = np.array([1, 2, 3])
+arr2 = np.array([4, 5, 6])
+arr = np.stack((arr1, arr2), axis=1)
+print(arr)
+
+
+#Stacking Along Rows
+import numpy as np
+arr1 = np.array([1, 2, 3])
+arr2 = np.array([4, 5, 6])
+arr = np.hstack((arr1, arr2))
+print(arr)
+
+
+#Stacking Along Height (depth)
+import numpy as np
+arr1 = np.array([1, 2, 3])
+arr2 = np.array([4, 5, 6])
+arr = np.dstack((arr1, arr2))
+print(arr)    
+
+
+
+#NumPy Splitting Array
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5, 6])
+newarr = np.array_split(arr, 3)
+print(newarr)
+
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5, 6])
+newarr = np.array_split(arr, 4)
+print(newarr)
+
+#Split the 2-D array into three 2-D arrays.
+import numpy as np
+arr = np.array([[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]])
+newarr = np.array_split(arr, 3)
+print(newarr)
+
+
+#NumPy Searching Arrays (You can search an array for a certain value, and return the indexes that get a match.)
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5, 4, 4])
+x = np.where(arr == 4)
+print(x)
+
+
+#Find the indexes where the values are even:
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5, 6, 7, 8])
+x = np.where(arr%2 == 0)
+print(x)
+
+#Search Sorted (Find the indexes where the value 7 should be inserted)
+import numpy as np
+arr = np.array([6, 7, 8, 9])
+x = np.searchsorted(arr, 7)
+print(x)
+
+
+#Find the indexes where the value 7 should be inserted, starting from the right:
+import numpy as np
+arr = np.array([6, 7, 8, 9])
+x = np.searchsorted(arr, 7, side='right')
+print(x)
+
+#Find the indexes where the values 2, 4, and 6 should be inserted:
+import numpy as np
+arr = np.array([1, 3, 5, 7])
+x = np.searchsorted(arr, [2, 4, 6])
+print(x)
+
+#NumPy Sorting Arrays
+import numpy as np
+arr = np.array([3, 2, 0, 1])
+print(np.sort(arr))
+
+
+import numpy as np
+arr = np.array([[3, 2, 4], [5, 0, 1]])
+print(np.sort(arr))
+
+import numpy as np
+arr = np.array(['banana', 'cherry', 'apple'])
+print(np.sort(arr))
+
+#NumPy Filter Array  (Getting some elements out of an existing array and creating a new array out of them is called filtering.)
+import numpy as np
+arr = np.array([41, 42, 43, 44])
+x = [True, False, True, False]
+newarr = arr[x]
+print(newarr)
+
+
+#Create a filter array that will return only values higher than 42:
+import numpy as np
+arr = np.array([41, 42, 43, 44])
+
+# Create an empty list
+filter_arr = []
+
+# go through each element in arr
+for element in arr:
+  # if the element is higher than 42, set the value to True, otherwise False:
+  if element > 42:
+    filter_arr.append(True)
+  else:
+    filter_arr.append(False)
+
+newarr = arr[filter_arr]
+
+print(filter_arr)
+print(newarr)
+
+#Create a filter array that will return only even elements from the original array:
+import numpy as np
+arr = np.array([1, 2, 3, 4, 5, 6, 7])
+# Create an empty list
+filter_arr = []
+# go through each element in arr
+for element in arr:
+  # if the element is completely divisble by 2, set the value to True, otherwise False
+  if element % 2 == 0:
+    filter_arr.append(True)
+  else:
+    filter_arr.append(False)
+newarr = arr[filter_arr]
+print(filter_arr)
+print(newarr)
