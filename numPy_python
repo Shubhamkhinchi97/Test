@@ -1,0 +1,166 @@
+#### NumPy Tutorial  ####
+# NumPy is a Python library.
+# NumPy is used for working with arrays.
+# NumPy stands for Numerical Python.
+# It also has functions for working in domain of linear algebra, fourier transform, and matrices.
+
+
+import numpy  as np
+temp = np.array([12,53,54,89,65,321]) 
+print (temp)
+
+import numpy as np
+print (np.__version__)
+
+
+# NumPy Creating Arrays
+import numpy  as np
+temp = np.array([12,53,54,89,65,321]) 
+print (temp)
+print(type(temp))
+
+# tuple to array 
+import numpy  as np
+temp = np.array((12,53,54,89,65,321)) 
+print (temp)
+
+
+# 1-D Arrays
+
+import numpy as np 
+text = np.array([45,65,8789,6465,313])
+print(text)
+print(text.ndim)
+
+# 2-D Arrays
+
+import numpy as np 
+text = np.array([[45,65,87],[64,65,313]])
+print(text)
+print(text.ndim)   
+
+# 3-D Arrays
+
+import numpy as np 
+text = np.array([[[45,65,87],[64,65,313]],[[45,25,21],[55,88,77]]])
+print(text)
+print(text.ndim)
+
+
+## Higher Dimensional Arrays
+
+import numpy as np 
+text = np.array([444,55,888,],ndmin = 3)
+print (text)
+
+
+# NumPy Array Indexing
+import numpy as np 
+text = np.array([55,45,65,22])
+print(text[0])
+
+import numpy as np 
+text = np.array([55,45,65,22])
+print(text[1])
+
+
+# Get third and fourth elements from the following array and add them.
+
+import numpy as np
+arr = np.array([1, 2, 3, 4])
+print(arr[2] + arr[3])
+print(arr.ndim)
+
+
+
+#Access 2-D Arrays
+import numpy as np   
+text = np.array([[45,12,33],[45,65,32]])
+print(text[2,2])
+print(text[2:2])
+print(text)
+print(text.ndim)
+
+#Access 3-D Arrays
+import numpy as np  
+text = np.array([[[12,32,12],[412,32,32]],[[45,65,65],[21,32,12]]])
+print (type(text))
+print (text.ndim)
+print (text[1,1,0])
+
+
+#NumPy Array Slicing
+import numpy as np  
+text = np.array([12,32,12,412,32,132])
+print (text[2:5])
+
+import numpy as np  
+text = np.array([12,32,12,412,32,132])
+print (text[2:])
+
+import numpy as np  
+text = np.array([12,32,12,412,32,132])
+print (text[:3])
+
+
+#Negative Slicing
+import numpy as np  
+text = np.array([12,32,12,412,32,132])
+print (text[-3:-1])
+
+import numpy as np  
+text = np.array([12,32,12,412,32,132])
+print (text[-3:])
+
+# step 
+# [first step:last step:step move]
+import numpy as np  
+text = np.array([12,32,12,412,38,132])
+print (text[1:5:2])
+
+import numpy as np  
+text = np.array([12,32,12,412,38,132])
+print (text[::2])
+
+#Slicing 2-D Arrays
+import numpy as np  
+text = np.array([[12,32,12],[412,38,132]])
+print (text[0,1:4])
+
+
+import numpy as np  
+text = np.array([[12,32,12],[412,38,132]])
+print (text[0:1,2])
+
+import numpy as np  
+text = np.array([[12,32,12],[412,38,132]])
+print (text[0:1,0:1])
+
+
+#NumPy Data Types
+#i - integer
+#b - boolean
+#u - unsigned integer
+#f - float
+#c - complex float
+#m - timedelta
+#M - datetime
+#O - object
+#S - string
+#U - unicode string
+#V - fixed chunk of memory for other type ( void )
+
+
+
+import numpy as np  
+text = np.array([[12,32,12],[412,38,132]])
+print (text.dtype)
+
+import numpy as np
+arr = np.array([1, 2, 3, 4], dtype='S')
+print(arr)
+print(arr.dtype)
+
+
+
+#NumPy Array Copy vs View
