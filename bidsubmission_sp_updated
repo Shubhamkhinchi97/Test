@@ -1,0 +1,1422 @@
+CREATE TYPE shubham_bidsubmission AS (
+    V_IsValidCaptcha INT,
+    V_BidId INT,
+    V_OutputStr VARCHAR(3000),
+    V_bidSubmittedDate TIMESTAMP
+);
+
+
+CREATE OR REPLACE FUNCTION appauctionbid.P_BidSubmission(
+    V_AuctionId INT,
+    V_BidderId INT,
+    V_TableId INT,
+    V_RowId INT,
+    V_BidPrice DECIMAL(20,5),
+    V_IPAddress VARCHAR(25),
+    V_BidType INT, -- 0 = Manual , 1 = Auto
+    V_SessionUserId INT,
+    V_UserDetailId INT,
+    V_BidDetailStr TEXT, -- Using TEXT instead of NVARCHAR(max)
+    V_CheckBidAmtStr TEXT, -- Using TEXT instead of NVARCHAR(max)
+    V_CalledFrom INT,
+    V_QtyBidPrice DECIMAL(20,5)
+)
+RETURNS shubham_bidsubmission AS $$
+BEGIN    --first begin 
+
+   DECLARE
+    V_AuctionResult INT := 0; -- 1 = Grand Total, 2 = Item Wise, 3 = Both
+    V_AuctionType INT := 0; -- 1 = Standard, 2 = Rank
+    V_EvenTypeId INT := 0; -- 1 = Forward, 2 = Reverse
+    V_BiddingType INT := 0; -- 1 = NCB , 2 = ICB
+    V_IncDecType INT := 0; -- 1 = Figure , 2 = Percentage
+    V_H1L1Amount DECIMAL := 0.0; -- H1 or L1 amount
+    V_H1L1CurrencyId SMALLINT := 0;
+    V_IncDecInMultiple INT := 0; -- 0 = No , 1 = Yes
+    V_IncDecAmount DECIMAL := 0.0; -- Increment/Decrement Amount
+    V_StartPrice DECIMAL := 0.0;
+    V_AuctionMode INT := 0; -- 1 = Open, 2 = Limited
+    V_IsBidderWiseStartPrice INT := 0; -- 0 = No, 1 = Yes
+    V_CheckReservePrice INT := 0; -- 0 = No , 1 = Yes
+    V_ReservePrice DECIMAL := 0.0;
+    V_IsItemWiseTime INT := 0; -- 0 = No , 1 = Yes
+    V_IsAutoExt INT := 0; -- 0 = No , 1 = Yes
+    V_AuctionStatus INT := 0; -- 0 = Pending, 1 = Approved, 2 = Cancelled
+    V_FirstBidCond INT := 0; -- 1 = AuctinStartPrice , 2 = AuctionStartPrice+(-)Increment(Decrement)Value
+    V_AuctionEndDate TIMESTAMP;
+    V_EndDateVirtual TIMESTAMP;
+    V_StartDate TIMESTAMP;
+    V_ExtMode INT := 0; -- 1 = Fixed , 2 = Unlimited
+    V_ExtendBy INT := 0; -- Extension Minute
+    V_ExtendWhen INT := 0; -- Extension accure if during this minute valid bid received
+    V_TotalExt INT := 0;
+    V_CurrentExt INT := 0;
+    V_BaseCurrencyId INT := 0;
+    V_BidderCurrencyId INT := 0;
+    V_CheckBidPrice DECIMAL := 0.0;
+    V_BidDate TIMESTAMP;
+    V_IsValidBid INT := 1; -- 0 = No , 1 = Yes
+    V_Count INT := 0;
+    V_IsPvsH1Bidder INT := 0;
+    V_RejectBidStatus INT := 0;
+    V_IsFirstBid INT := 0; -- 0 = Yes, 1 =  No
+    V_RankForExt INT := 0;
+    V_CStatus INT := 0;
+    V_DecimalValueUpto INT := 0;
+    V_QueryStr TEXT := '';
+    V_Temp VARCHAR(35);
+    V_OldRank INT := 0;
+    V_IsValidAutoBid INT := 0; -- 0 = No , 1 = Yes
+    v_isAutoBidAllowed INT := 0;
+    v_configureTimeForItem INT := 0; -- 0 = Not set , 1 = Parallel, 2 = Serial
+    V_SerialEndDateVirtual TIMESTAMP; -- Use for Serial Auction
+    -- Emd changes
+    V_IsEmdReq INT := 0; -- 0 = No, 1 = Yes
+    V_BiddingCapacity DECIMAL := 0.0; -- Use for Serial Auction
+    V_EmdBalId INT := 0;
+    V_EmdBalance DECIMAL := 0.0;
+    V_EmdAmount DECIMAL := 0.0;
+    V_EmdUsed DECIMAL := 0.0;
+    V_bidderIdEmd INT := 0;
+    V_H2bidder INT := 0;
+    V_totalH1Bid DECIMAL := 0.0;
+    V_ConfigEmdAmt DECIMAL := 0.0;
+    -- Start - For CR:23766 To have check on minimum quantity required
+    V_isMinQtyChkReq INT := 0;
+    V_minQtyBid DECIMAL := 0.0;
+    V_maxQtyBid DECIMAL := 0.0;
+    V_QtyColumnTypeId INT := 2; -- End - For CR:23766 To have check on minimum quantity required
+    V_IsBidPriceIncDecInTimesReq INT := 0;
+    V_BidPriceIncDecInTimes INT := 0;
+    V_IsBidCapacityReq SMALLINT := 0;
+    V_IsRestrictH1Bidder SMALLINT := 0;
+    V_ItemH1Count INT := 0;
+    V_GovColDtType INT := 0;
+    V_IsRankExits INT := 0;
+    V_IsDisplayL1ItemWiseAndGTWise INT := 0;
+    V_TempCheckBidAmtStr VARCHAR(3000); -- Adjust length as per your requirement
+    V_DelimIndex INT;
+    V_TempBidPrice DECIMAL := 0.0;
+    V_TempRowId INT := 1;
+    V_IssecurityFees INT := 0;
+    V_emdPaymentMode INT := 0;
+    V_rankLogic INT := 0;
+    V_NoOfBidRestriction INT;
+    V_NoOfBidAllowed INT;
+    V_RemainBidAllowed INT := 0;
+    -- Restrict Bidder on L1/H1 and EMD - 1: YES, 0: NO - EMD Rollout CR #9483
+    V_isRestrictBidderOnl1h1EMD INT := 0;
+    -- Auto Bid Notification CR #9679
+    V_AuctionBrief TEXT := '';
+    V_Subject VARCHAR(255) := '';
+    V_Body TEXT := '';
+    V_TableContents TEXT := '';
+    V_ItemName TEXT := '';
+    V_TableLimits TEXT := '';
+    V_AutoBidConfigOn TIMESTAMP;
+    V_FromAddress VARCHAR(250) := '';
+    V_EmailId VARCHAR(250) := '';
+    V_LinkId INT := 0;
+    V_BidderIdAutoBid INT := 0;
+    V_LowerLimit TEXT := '';
+    V_UpperLimit TEXT := '';
+    V_Id INT := 1;
+    -- byMessageBox Notification
+    V_IsMsgBoxMailRequired INT := 0;
+    V_MsgBoxSubject TEXT := '';
+    V_MsgBoxBody TEXT := '';
+    V_ClientID INT := 0;
+    V_IsRestrictByCaptcha SMALLINT := 0;
+    V_CaptchaRestrictEnableDurationInSec SMALLINT := 0;
+    V_LastBidTimestamp TIMESTAMP;
+
+	BEGIN  --2nd begin 
+	 V_IsValidCaptcha := 0;
+     V_BidId := 0;
+     V_OutputStr := '';
+     V_BidDate := CURRENT_TIMESTAMP;
+     RAISE NOTICE 'V_BidDate: %', V_BidDate;
+     
+     SELECT a.dataType INTO V_GovColDtType
+     FROM appauction.tbl_AuctionColumn a
+     INNER JOIN appauction.tbl_AuctionGovColumn b ON a.columnId = b.columnId
+     WHERE b.tableId = V_TableId;
+     
+     IF V_GovColDtType = 5 OR V_BidPrice != 0.0 OR V_BidType = 1 THEN    --1st if condition
+       
+-- Step: 1 Get Auction parameters
+SELECT 
+    startPrice, reservePrice, isAutoBidAllowed, emdAmt
+INTO 
+    V_StartPrice, V_ReservePrice, v_isAutoBidAllowed, V_ConfigEmdAmt
+FROM 
+    appauction.tbl_AuctionCriteria 
+WHERE 
+    auctionId = V_AuctionId AND rowId = V_RowId;
+
+SELECT 
+    COUNT(*)
+INTO 
+    V_IsPvsH1Bidder 
+FROM 
+    appauctionbid.tbl_AuctionBidRank 
+WHERE 
+    auctionId = V_AuctionId AND isActive = 1 AND bidderRank = 1 AND bidderId = V_BidderId AND rowId = V_RowId;
+
+SELECT 
+    GETUTCDATE(), auctionResult, biddingType, eventTypeId, auctionType, incDecType,
+    configureTimeForItem, incDecInMultiple, checkReservePrice, isItemWiseTime, cstatus,
+    rankForExt, auctionMode, isBidderWiseStartPrice, firstBidCond, decimalValueUpto,
+    isAutoExt, startDate, endDateVirtual, extMode, extendBy, extendWhen, totalExt, currentExt,
+    isEmdReq, biddingCapacity, isMinQtyReq, isBidPriceIncDecInTimesReq,
+    isBidCapacityReq, isRestrictH1Bidder, isDisplayL1ItemWiseAndGTWise,
+    securityFees, emdPaymentMode, rankLogic, noOfBidRestriction, noOfBidAllowed,
+    isRestrictBidderOnl1h1, auctionBrief
+INTO 
+    V_BidDate, V_AuctionResult, V_BiddingType, V_EvenTypeId, V_AuctionType, V_IncDecType,
+    v_configureTimeForItem, V_IncDecInMultiple, V_CheckReservePrice, V_IsItemWiseTime, V_CStatus,
+    V_RankForExt, V_AuctionMode, V_IsBidderWiseStartPrice, V_FirstBidCond, V_DecimalValueUpto,
+    V_IsAutoExt, V_StartDate, V_EndDateVirtual, V_ExtMode, V_ExtendBy, V_ExtendWhen, V_TotalExt, V_CurrentExt,
+    V_IsEmdReq, V_BiddingCapacity, V_isMinQtyChkReq, V_IsBidPriceIncDecInTimesReq,
+    V_IsBidCapacityReq, V_IsRestrictH1Bidder, V_IsDisplayL1ItemWiseAndGTWise,
+    V_IssecurityFees, V_emdPaymentMode, V_rankLogic, V_NoOfBidRestriction, V_NoOfBidAllowed,
+    V_isRestrictBidderOnl1h1EMD, V_AuctionBrief 
+FROM 
+    appauction.tbl_Auction 
+WHERE 
+    auctionId = V_AuctionId;
+
+
+
+-- If Auction is Item wise, Standard, Limited and IsRestrictH1Bidder is Yes
+IF V_AuctionResult = 2 AND V_AuctionType = 1 AND V_AuctionMode = 2 AND V_IsRestrictH1Bidder = 1 THEN
+    -- Get Total count of items where this bidder is H1/L1
+    SELECT 
+        COUNT(1) INTO V_ItemH1Count 
+    FROM 
+        appauctionbid.tbl_AuctionBidRank 
+    WHERE 
+        auctionId = V_AuctionId AND tableId = V_TableId
+        AND bidderId = V_BidderId AND bidderRank = 1 AND isActive = 1;
+END IF;
+
+-- Start - For CR:23766 To have check on minimum quantity required
+IF V_AuctionResult = 2 AND V_isMinQtyChkReq = 1 THEN -- If itemwise auction and if minimum qty check required is yes
+    SELECT minQty INTO V_minQtyBid FROM appauction.tbl_AuctionCriteria WHERE auctionId = V_AuctionId AND rowId = V_RowId;
+    
+    SELECT 
+        CONVERT(DECIMAL(20,5), tblauctioncell.cellValue) INTO V_maxQtyBid
+    FROM 
+        appauction.tbl_AuctionCell tblauctioncell 
+    INNER JOIN 
+        appauction.tbl_AuctionColumn tblauctioncolumn ON tblauctioncell.columnId = tblauctioncolumn.columnId
+    WHERE 
+        tblauctioncolumn.tableId = V_TableId AND tblauctioncell.rowId = V_RowId AND tblauctioncolumn.columnTypeId = V_QtyColumnTypeId;
+END IF;
+-- End - For CR:23766 To have check on minimum quantity required
+
+-- Start - For Change Request #25679 - Increment/Decrement In times logic
+IF V_IncDecType = 1 AND V_IsBidPriceIncDecInTimesReq = 1 THEN -- If Inc/dec type in Figure and Bidding price increment/decrement in times required is yes
+    SELECT bidPriceIncDecInTimes INTO V_BidPriceIncDecInTimes FROM appauction.tbl_AuctionCriteria WHERE auctionId = V_AuctionId AND rowId = V_RowId;
+END IF;
+-- End - For Change Request #25679 - Increment/Decrement In times logic
+
+IF V_IsBidderWiseStartPrice = 1 THEN -- Bidder wise start price set to yes
+    SELECT startPrice INTO V_StartPrice FROM appauction.tbl_AuctionBidderMap 
+    WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND bidderId = V_BidderId;
+END IF;
+
+-- Check Bidding Type = 'ICB' then convert bid amount into base currency
+IF V_BiddingType = 2 THEN
+    -- Get bidder currency id
+    SELECT 
+        B.currencyId INTO V_BidderCurrencyId 
+    FROM 
+        appauctionbid.tbl_AuctionBidCurrency A
+    INNER JOIN 
+        appauction.tbl_AuctionCurrency B ON A.auctionCurrencyId = B.auctionCurrencyId
+    WHERE 
+        A.bidderId = V_BidderId AND A.tableId = V_TableId AND A.rowId = V_RowId;
+    
+    -- Get auction Base currency
+    SELECT 
+        currencyId INTO V_BaseCurrencyId 
+    FROM 
+        appauction.tbl_AuctionCurrency 
+    WHERE 
+        auctionId = V_AuctionId AND isDefault = 1;
+
+    IF V_BidderCurrencyId != V_BaseCurrencyId THEN
+        V_StartPrice := appauction.F_CurrencyConvertion(V_StartPrice, V_BaseCurrencyId, V_BidderCurrencyId, V_BaseCurrencyId, V_AuctionId, V_DecimalValueUpto, V_EvenTypeId, 0);
+        V_ReservePrice := appauction.F_CurrencyConvertion(V_ReservePrice, V_BaseCurrencyId, V_BidderCurrencyId, V_BaseCurrencyId, V_AuctionId, V_DecimalValueUpto, V_EvenTypeId, 0);
+    END IF;
+END IF;
+
+
+-- Step: 2 Check if auction is closed, bidder is block listed, auction is stopped or paused
+V_Count := 1;
+SELECT 
+    CASE 
+        WHEN (AM.configureTimeForItem = 2 AND AC.cstatus != 0) THEN
+            CASE 
+                WHEN (V_bidDate > AC.endDateVirtual) THEN 0 
+                WHEN (V_bidDate < AC.StartDate) THEN -1  
+                ELSE 1
+            END 
+        WHEN (AM.configureTimeForItem = 2 AND AC.cstatus = 0) THEN 
+            -1		
+        WHEN (AM.auctionResult = 2 AND AM.isItemWiseTime = 1) THEN			
+            CASE 
+                WHEN (V_bidDate > AC.endDateVirtual) THEN 0 
+                WHEN (V_bidDate < AC.StartDate) THEN -1  
+                ELSE 1
+            END 
+        ELSE
+            CASE 
+                WHEN (V_bidDate > AM.endDateVirtual) THEN 0 
+                WHEN (V_bidDate < AM.StartDate) THEN -1  
+                ELSE 1
+            END 
+    END INTO V_Count
+FROM 
+    appauction.tbl_Auction AM 
+INNER JOIN 
+    appauction.tbl_AuctionCriteria AC ON AM.auctionId = AC.auctionId 
+WHERE 
+    AM.auctionId = V_AuctionId AND AC.rowId = V_RowId;
+
+
+-- Modified By Nirav Raval For CR 19170 Allow Proxy Bid in Future Event
+IF (V_BidderId = V_SessionUserId AND V_Count = -1) THEN -- Check for bid started
+    V_OutputStr := 'msg_auc_notstarted';
+    V_IsValidBid := 0;
+    V_RejectBidStatus := 13;
+ELSEIF (V_Count = 0 AND V_CalledFrom != 1) /* Check for Bid time over? */
+          BEGIN
+				SET V_OutputStr := 'msg_aucbid_bidtimeover';
+				SET V_IsValidBid := 0;
+				SET V_RejectBidStatus  := 5;
+			END
+			ELSE
+			BEGIN
+    SELECT COUNT(1) INTO V_Count FROM appauctionbid.tbl_AuctionBidConfirmation WHERE auctionId = V_AuctionId AND bidderId = V_BidderId;
+    
+    IF V_Count <= 0 AND V_BidType != 1 THEN
+        BEGIN
+            V_OutputStr := 'msg_auc_iagreeremain';
+            V_IsValidBid := 0;
+            V_RejectBidStatus := 12;
+        END;
+    ELSE
+        BEGIN
+            V_AuctionStatus := 0;
+            SELECT cstatus INTO V_AuctionStatus FROM appauction.tbl_AuctionStatus WHERE auctionId = V_AuctionId AND (cstatus IN (2,3) OR (cstatus = 1 AND CURRENT_TIMESTAMP BETWEEN stratdate AND endDate)) ORDER BY auctionStatusId DESC LIMIT 1;
+            
+            IF V_CStatus = 2 THEN -- Check for Auction Is cancelled
+                BEGIN
+                    V_OutputStr := 'msg_auc_cancel';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 11;
+                END;
+            ELSEIF V_AuctionStatus = 1 THEN -- Check for Auction Is paused
+                BEGIN
+                    V_OutputStr := 'msg_auc_pause';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 7;
+                END;
+            ELSEIF V_AuctionStatus = 2 THEN -- Check for Auction Is stopped
+                BEGIN
+                    V_OutputStr := 'msg_auc_stop';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 8;
+                END;
+            ELSE
+                BEGIN
+                    V_Count := 0;
+                    SELECT COUNT(1) INTO V_Count FROM appauctionbid.tbl_AuctionBlockBidder WHERE auctionId = V_AuctionId AND bidderid = V_BidderId AND isBlocked = 1;
+                    
+                    IF V_Count > 0 THEN -- Check for Bidder was blocked
+                        BEGIN
+                            V_OutputStr := 'msg_aucbid_bidderblock';
+                            V_IsValidBid := 0;
+                            V_RejectBidStatus := 6;
+                        END;
+                    ELSEIF V_NoOfBidRestriction = 1 THEN
+                        BEGIN
+                            IF V_AuctionResult = 2 THEN
+                                BEGIN
+                                    SELECT noOfBidAllowed INTO V_NoOfBidAllowed FROM appauction.tbl_AuctionCriteria WHERE auctionId = V_AuctionId AND rowId = V_RowId;
+                                    SELECT @V_RemainBidAllowed := (V_NoOfBidAllowed - COALESCE(COUNT(bidId),0)) FROM appauctionbid.tbl_auctionbid WHERE auctionId = V_AuctionId AND rowId = V_RowId AND bidderId = V_BidderId AND isApproved = 1 AND submittedBy = bidderId;
+                                END;
+                            ELSE
+                                BEGIN
+                                    SELECT @V_RemainBidAllowed := (V_NoOfBidAllowed - COALESCE(COUNT(bidId),0)) FROM appauctionbid.tbl_auctionbid WHERE auctionId = V_AuctionId AND bidderId = V_BidderId AND isApproved = 1 AND submittedBy = bidderId;
+                                END;
+                            
+                            IF V_RemainBidAllowed = 0 AND V_BidderId = V_SessionUserId THEN -- Check bid is Remaining for bidder or not
+                                BEGIN
+                                    V_OutputStr := 'msg_aucbid_no_remainBid';
+                                    V_IsValidBid := 0;
+                                    V_RejectBidStatus := 25;
+                                END;
+                        END;
+                    ELSEIF V_AuctionResult = 2 AND V_isMinQtyChkReq = 1 THEN -- Check for minimum quantity required
+                        BEGIN
+                            IF V_QtyBidPrice < V_minQtyBid THEN
+                                BEGIN
+                                    V_OutputStr := 'msg_auc_bid_minqtycheck';
+                                    V_IsValidBid := 0;
+                                    V_RejectBidStatus := 15;
+                                END;
+                            ELSEIF V_QtyBidPrice > V_maxQtyBid THEN
+                                BEGIN
+                                    V_OutputStr := 'msg_auc_bid_maxqtycheck';
+                                    V_IsValidBid := 0;
+                                    V_RejectBidStatus := 16;
+                                END;
+                        END;
+                    END IF;
+                END;
+            END IF;
+        END;
+    END IF;
+END;
+END IF;
+
+
+----5555 if condition 
+IF V_RejectBidStatus = 0 AND V_BidType = 1 THEN -- Auto Bid
+    BEGIN
+        PERFORM appauctionbid.p_AutoBid(V_AuctionId, V_TableId, V_RowId, V_IPAddress, V_SessionUserId, V_UserDetailId, V_BidDate, V_CalledFrom, V_IsValidBid);
+    END;
+ELSE
+BEGIN
+-- Check in case of auction type is both(Grandtotal+Itemwise)
+IF V_AuctionResult = 3 AND V_RejectBidStatus = 0 THEN
+BEGIN
+    V_RejectBidStatus := 0;
+    PERFORM appauctionbid.p_ValidateGrandTotalBid(V_auctionId, V_BidderId, V_TableId, V_SessionUserId, V_CheckBidAmtStr, V_RejectBidStatus);
+    
+    IF V_RejectBidStatus != 0 THEN
+    BEGIN
+        V_OutputStr := 'msg_aucbid_invalidbid';
+        V_IsValidBid := 0;
+    END IF;
+END;
+
+
+-- Step: 3 Get H1L1Amount
+IF V_AuctionType = 1 THEN -- Standard Auction
+    SELECT COUNT(1) INTO V_IsFirstBid FROM appauctionbid.tbl_AuctionBidRank
+    WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND isActive = 1;
+
+    IF V_EvenTypeId = 1 AND V_IsEmdReq = 1 AND (V_IsBidCapacityReq = 1 OR V_IsBidCapacityReq = 2) THEN
+        SELECT emdBalance, emdId INTO V_EmdBalance, V_EmdBalId FROM appauction.tbl_EmdBalance WHERE auctionId = V_AuctionId AND bidderId = V_BidderId;
+    END IF;
+
+    IF V_EvenTypeId = 2 AND V_IsEmdReq = 1 AND V_IsBidCapacityReq = 2 AND V_IssecurityFees = 2 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1 THEN
+        SELECT emdBalance, emdId INTO V_EmdBalance, V_EmdBalId FROM appauction.tbl_EmdBalance WHERE auctionId = V_AuctionId AND bidderId = V_BidderId;
+    END IF;
+
+    IF V_isRestrictBidderOnl1h1EMD = 1 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1 AND V_IsEmdReq = 2 THEN
+        SELECT emdBalance, emdId INTO V_EmdBalance, V_EmdBalId FROM appauction.tbl_EmdBalance WHERE auctionId = V_AuctionId AND bidderId = V_BidderId;
+    END IF;
+
+    IF V_BiddingType = 2 THEN
+        SELECT (CASE WHEN ABCD.currencyId = V_BidderCurrencyId THEN AB.bidderBidPrice ELSE ABR.bidPrice END), ABCD.currencyId
+        INTO V_H1L1Amount, V_H1L1CurrencyId
+        FROM appauctionbid.tbl_AuctionBidRank ABR
+        INNER JOIN appauctionbid.tbl_AuctionBid AB ON ABR.bidId = AB.bidId
+        INNER JOIN appauctionbid.tbl_AuctionBidCurrency ABCU ON ABCU.tableId = ABR.tableId AND ABCU.rowId = ABR.rowId AND ABCU.bidderId = ABR.bidderId
+        INNER JOIN appauction.tbl_AuctionCurrency ABCD ON ABCD.auctionCurrencyId = ABCU.auctionCurrencyId
+        WHERE ABR.auctionId = V_AuctionId AND ABR.tableId = V_TableId AND ABR.rowId = V_RowId AND ABR.isActive = 1 AND ABR.bidderRank = 1;
+    ELSE
+        SELECT bidPrice INTO V_H1L1Amount
+        FROM appauctionbid.tbl_AuctionBidRank
+        WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND isActive = 1 AND bidderRank = 1;
+    END IF;
+
+    IF V_H1L1Amount IS NULL THEN
+        V_H1L1Amount := 0.0;
+    END IF;
+ELSEIF V_AuctionType = 2 AND V_EvenTypeId = 1 THEN -- Rank Auction and Forward Auction
+    SELECT COUNT(1) INTO V_IsFirstBid FROM appauctionbid.tbl_AuctionBidRank
+    WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND bidderId = V_BidderId AND isActive = 1;
+
+    IF V_EvenTypeId = 1 AND V_IsEmdReq = 1 AND V_IsBidCapacityReq = 1 THEN
+        SELECT emdBalance, emdId INTO V_EmdBalance, V_EmdBalId FROM appauction.tbl_EmdBalance WHERE auctionId = V_AuctionId AND bidderId = V_BidderId;
+    END IF;
+
+    IF V_isRestrictBidderOnl1h1EMD = 1 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1 AND V_IsEmdReq = 2 THEN
+        SELECT emdBalance, emdId INTO V_EmdBalance, V_EmdBalId FROM appauction.tbl_EmdBalance WHERE auctionId = V_AuctionId AND bidderId = V_BidderId;
+    END IF;
+
+    IF V_rankLogic = 0 THEN
+        IF V_BiddingType = 2 THEN
+            SELECT ISNULL(MAX(bidderBidPrice), 0) INTO V_H1L1Amount FROM appauctionbid.tbl_AuctionBid
+            WHERE isApproved = 1 AND bidderId = V_BidderId AND auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId;
+        ELSE
+            SELECT ISNULL(MAX(bidPrice), 0) INTO V_H1L1Amount FROM appauctionbid.tbl_AuctionBid
+            WHERE isApproved = 1 AND bidderId = V_BidderId AND auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId;
+        END IF;
+    ELSE
+        V_Count := 0;
+        SELECT COUNT(bidPrice) INTO V_Count FROM appauctionbid.tbl_AuctionBid
+        WHERE isApproved = 1 AND bidPrice = V_BidPrice AND auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND bidderId != V_BidderId;
+
+        IF V_BiddingType = 2 THEN
+            IF V_Count = 0 THEN
+                SELECT ISNULL(MAX(bidderBidPrice), 0) INTO V_H1L1Amount FROM appauctionbid.tbl_AuctionBid
+                WHERE isApproved = 1 AND bidderId = V_BidderId AND auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId;
+            ELSE
+                V_OutputStr := 'msg_samebid_not_accepted';
+                V_IsValidBid := 0;
+                V_RejectBidStatus := 23;
+            END IF;
+        ELSE
+            IF V_Count = 0 THEN
+                SELECT ISNULL(MAX(bidPrice), 0) INTO V_H1L1Amount FROM appauctionbid.tbl_AuctionBid
+                WHERE isApproved = 1 AND bidderId = V_BidderId AND auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId;
+            ELSE
+                V_OutputStr := 'msg_samebid_not_accepted';
+                V_IsValidBid := 0;
+                V_RejectBidStatus := 23;
+            END IF;
+        END IF;
+    END IF;
+ELSEIF V_AuctionType = 2 AND V_EvenTypeId = 2 THEN -- Rank Auction and Reverse Auction
+    SELECT COUNT(1) INTO V_IsFirstBid FROM appauctionbid.tbl_AuctionBidRank
+    WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND bidderId = V_BidderId AND isActive = 1;
+
+    IF V_rankLogic = 0 THEN
+        IF V_BiddingType = 2 THEN
+            SELECT ISNULL(MIN(bidderBidPrice), 0) INTO V_H1L1Amount FROM appauctionbid.tbl_AuctionBid
+            WHERE isApproved = 1 AND bidderId = V_BidderId AND auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId;
+        ELSE
+            SELECT ISNULL(MIN(bidPrice), 0) INTO V_H1L1Amount FROM appauctionbid.tbl_AuctionBid
+            WHERE isApproved = 1 AND bidderId = V_BidderId AND auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId;
+        END IF;
+    ELSE
+        V_Count := 0;
+        SELECT COUNT(bidPrice) INTO V_Count FROM appauctionbid.tbl_AuctionBid
+        WHERE isApproved = 1 AND bidderBidPrice = V_BidPrice AND auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND bidderId != V_BidderId;
+
+        IF V_BiddingType = 2 THEN
+            IF V_Count = 0 THEN
+                SELECT ISNULL(MIN(bidderBidPrice), 0) INTO V_H1L1Amount FROM appauctionbid.tbl_AuctionBid
+                WHERE isApproved = 1 AND bidderId = V_BidderId AND auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId;
+            ELSE
+                V_OutputStr := 'msg_samebid_not_accepted';
+                V_IsValidBid := 0;
+                V_RejectBidStatus := 23;
+            END IF;
+        ELSE
+            IF V_Count = 0 THEN
+                SELECT ISNULL(MIN(bidPrice), 0) INTO V_H1L1Amount FROM appauctionbid.tbl_AuctionBid
+                WHERE isApproved = 1 AND bidderId = V_BidderId AND auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId;
+            ELSE
+                V_OutputStr := 'msg_samebid_not_accepted';
+                V_IsValidBid := 0;
+                V_RejectBidStatus := 23;
+            END IF;
+        END IF;
+    END IF;
+
+    IF V_isRestrictBidderOnl1h1EMD = 1 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1 AND V_IsEmdReq = 2 THEN
+        SELECT emdBalance, emdId INTO V_EmdBalance, V_EmdBalId FROM appauction.tbl_EmdBalance WHERE auctionId = V_AuctionId AND bidderId = V_BidderId;
+    END IF;
+END IF;
+
+
+IF V_BiddingType = 2 AND V_BidderCurrencyId != V_BaseCurrencyId AND V_BidderCurrencyId != V_H1L1CurrencyId THEN
+    V_H1L1Amount := appauction.F_CurrencyConvertion(V_H1L1Amount, V_BaseCurrencyId, V_BidderCurrencyId, V_BaseCurrencyId, V_AuctionId, V_DecimalValueUpto, V_EvenTypeId, 0);
+END IF;
+
+IF V_IsFirstBid != 0 AND V_AuctionType = 1 AND V_IsBidderWiseStartPrice = 1 AND ((V_EvenTypeId = 1 AND V_StartPrice > V_H1L1Amount) OR (V_EvenTypeId = 2 AND V_StartPrice < V_H1L1Amount)) THEN
+    SELECT COUNT(1) INTO V_IsFirstBid FROM appauctionbid.tbl_AuctionBidRank
+    WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND bidderId = V_BidderId AND isActive = 1;
+
+    IF V_IsFirstBid = 0 THEN
+        V_H1L1Amount := 0.0;
+    END IF;
+END IF;
+
+-- Check whether autobid is enabled
+V_Count := 0;
+
+SELECT COALESCE(bidderRank, 0) INTO V_Count
+FROM appauctionbid.tbl_AuctionBidRank
+WHERE auctionId = V_AuctionId AND rowId = V_RowId AND bidderId = V_BidderId AND isActive = 1;
+
+RAISE NOTICE 'Count: %', V_Count;
+
+IF V_RejectBidStatus = 0 AND v_isAutoBidAllowed = 1 AND V_Count <= 1 THEN -- Auto bid allowed
+    V_Count := 0;
+
+    IF V_EvenTypeId = 1 THEN -- Forward Auction
+        SELECT COUNT(1) INTO V_Count
+        FROM appauctionbid.tbl_AutoBid
+        WHERE auctionId = V_AuctionId AND (V_IsFirstBid = 0 OR bestPrice > V_H1L1Amount)
+        AND isActive = 1 AND rowId = V_RowId AND bidderId = V_BidderId;
+    ELSE --IF (V_EvenTypeId = 2) -- Reverse Auction
+        SELECT COUNT(1) INTO V_Count
+        FROM appauctionbid.tbl_AutoBid
+        WHERE auctionId = V_AuctionId AND (V_IsFirstBid = 0 OR bestPrice < V_H1L1Amount)
+        AND isActive = 1 AND rowId = V_RowId AND bidderId = V_BidderId;
+    END IF;
+
+    IF V_Count > 0 THEN
+        RAISE NOTICE 'msg_aucbid_autobidenabled';
+        V_IsValidBid := 0;
+        V_RejectBidStatus := 14;
+    END IF;
+END IF;
+
+
+IF V_RejectBidStatus = 0 THEN
+BEGIN
+    V_CheckBidPrice := V_BidPrice;
+    
+    -- Step 4: Reserve Price Check
+    IF V_CheckReservePrice = 1 AND V_EvenTypeId = 1 AND V_CheckBidPrice > V_ReservePrice THEN -- Reserve price check = yes and Forward auction
+        BEGIN
+            V_OutputStr := 'msg_aucbid_higherreserveprice';
+            V_IsValidBid := 0;
+            V_RejectBidStatus := 1;
+        END;
+    ELSE IF V_CheckReservePrice = 1 AND V_EvenTypeId = 2 AND V_CheckBidPrice < V_ReservePrice THEN -- Reserve price check = yes and Reverse auction
+        BEGIN
+            V_OutputStr := 'msg_aucbid_lowerreserveprice';
+            V_IsValidBid := 0;
+            V_RejectBidStatus := 1;
+        END;
+
+    -- Step 5: Get Decrement/Increment by identifying auction running under which duration in extension or original period? Validate bid amount based on that
+    IF V_IsValidBid != 0 THEN
+    BEGIN
+        IF V_IsFirstBid = 0 AND V_StartPrice = 0 THEN -- If auction first bid and start price is 0
+        BEGIN
+            V_H1L1Amount := V_CheckBidPrice;
+            V_StartPrice := V_CheckBidPrice;
+            V_IsValidBid := 1;
+            V_OutputStr := 'msg_aucbid_success';
+            
+            IF V_IsValidBid = 1 AND ((V_EvenTypeId = 1 AND V_IsEmdReq = 1 AND (V_IsBidCapacityReq = 1 OR V_IsBidCapacityReq = 2)) OR (V_EvenTypeId = 2 AND V_IsEmdReq = 1 AND V_IsBidCapacityReq = 2 AND V_IssecurityFees = 2 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1)) THEN -- If emd is enabled and Bid Capacity required as Yes or EMD wise and Auction is Forward or Reverse
+            BEGIN
+                IF V_IsBidCapacityReq = 1 THEN
+                BEGIN
+                    IF (V_CheckBidPrice / V_BiddingCapacity) > V_EmdBalance THEN
+                    BEGIN
+                        -- Reject bid because of EMD balance is insufficient with respect to bid
+                        V_OutputStr := 'msg_aucbid_emdinsufficient';
+                        V_IsValidBid := 0;
+                        V_RejectBidStatus := 21;
+                    END;
+                END;
+                ELSE IF V_IsBidCapacityReq = 2 THEN
+                BEGIN
+                    IF V_EmdBalance < V_ConfigEmdAmt THEN
+                    BEGIN
+                        V_OutputStr := 'msg_auc_payemd';
+                        V_IsValidBid := 0;
+                        V_RejectBidStatus := 21;
+                    END;
+                END;
+            END;
+
+            -- EMD Rollout - Insufficient EMD Balance Check
+            IF V_IsValidBid = 1 AND V_IsEmdReq = 2 AND V_isRestrictBidderOnl1h1EMD = 1 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1 THEN
+            BEGIN
+                IF V_EmdBalance < V_ConfigEmdAmt AND V_IsPvsH1Bidder != 1 THEN
+                BEGIN
+                    V_OutputStr := 'msg_aucbid_insufficient_emd_balance';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 28;
+                END;
+            END;
+
+            -- If Auction is Item wise, Standard, Limited, IsRestrictH1Bidder is Yes and Bidder is Rank 1 in 1 Item
+            IF V_AuctionResult = 2 AND V_AuctionType = 1 AND V_IsRestrictH1Bidder = 1 AND V_AuctionMode = 2 AND V_ItemH1Count = 1 THEN
+            BEGIN
+                V_OutputStr := 'msg_auction_restrictH1Bidder';
+                V_IsValidBid := 0;
+                V_RejectBidStatus := 18;
+            END;
+
+            IF V_AuctionType = 1 THEN -- If Standard Auction
+            BEGIN
+                UPDATE appauction.tbl_AuctionCriteria
+                SET startPrice = CASE WHEN V_BiddingType = 2 AND V_BidderCurrencyId != V_BaseCurrencyId THEN appauction.F_CurrencyConvertion(V_StartPrice, V_BidderCurrencyId, V_BaseCurrencyId, V_BaseCurrencyId, V_AuctionId, V_DecimalValueUpto, V_EvenTypeId, 0)
+                                      ELSE V_StartPrice END
+                WHERE auctionId = V_AuctionId AND rowId = V_RowId;
+            END;
+        END;
+        ELSE -- Start price is not 0 or is not first bid
+        BEGIN
+            IF V_IsItemWiseTime = 1 THEN -- If Item wise time required = Yes
+            BEGIN
+                SELECT V_IncDecAmount = 
+                CASE WHEN (B.isAutoExt = 1 AND B.endDate != B.endDateVirtual AND V_BidDate <= B.endDateVirtual) THEN
+                    B.incDecOnExt
+                WHEN (A.isIncDecInPeriod = 1 AND V_BidDate BETWEEN B.timeForIncDecToItem AND B.endDate) THEN
+                    B.incDecValOnTime
+                WHEN (V_BidDate BETWEEN B.startDate AND B.endDateVirtual) THEN
+                    B.incDecValue
+                WHEN (V_BidDate <= A.startDate AND V_BidderId != V_SessionUserId) THEN
+                    B.incDecValue
+                END
+                FROM appauction.tbl_Auction A
+                INNER JOIN appauction.tbl_AuctionCriteria B ON A.auctionId = B.auctionId
+                WHERE A.auctionId = V_AuctionId AND B.rowId = V_RowId;
+            END;
+            ELSE -- Auction result is "Grand total wise/both" or Itemwise time = No
+            BEGIN
+                SELECT V_IncDecAmount = 
+                CASE WHEN (A.isAutoExt = 1 AND A.endDate != A.endDateVirtual AND V_BidDate <= A.endDateVirtual) THEN
+                    B.incDecOnExt
+                WHEN (A.isIncDecInPeriod = 1 AND V_BidDate BETWEEN A.timeForIncDecToItem AND A.endDate) THEN
+                    B.incDecValOnTime
+                WHEN (V_BidDate BETWEEN A.startDate AND A.endDateVirtual) THEN
+                    B.incDecValue
+                WHEN (V_BidDate <= A.startDate AND V_BidderId != V_SessionUserId) THEN
+                    B.incDecValue
+                END
+                FROM appauction.tbl_Auction A
+                INNER JOIN appauction.tbl_AuctionCriteria B ON A.auctionId = B.auctionId
+                WHERE A.auctionId = V_AuctionId AND B.rowId = V_RowId;
+            END;
+
+            IF V_BiddingType = 2 AND V_BidderCurrencyId != V_BaseCurrencyId THEN
+            BEGIN
+                V_IncDecAmount := appauction.F_CurrencyConvertion(V_IncDecAmount, V_BaseCurrencyId, V_BidderCurrencyId, V_BaseCurrencyId, V_AuctionId, V_DecimalValueUpto, V_EvenTypeId, 1);
+            END;
+
+            IF V_IsFirstBid = 0 AND V_H1L1Amount = 0 AND V_StartPrice != 0 THEN -- If first bid and Auction Start price is not 0?
+            BEGIN
+                V_H1L1Amount := V_StartPrice;
+            END;
+
+            IF V_IncDecType = 2 THEN -- Increment /Decrement in percentage?
+            BEGIN
+                V_IncDecAmount := (V_H1L1Amount * V_IncDecAmount) / 100;
+            END;
+
+            IF V_EvenTypeId = 1 THEN -- Forward Auction
+            BEGIN
+                -- For Change Request #25679 - Increment/Decrement In times logic
+                IF V_IncDecType = 1 AND V_IsBidPriceIncDecInTimesReq = 1 AND (V_CheckBidPrice > (V_H1L1Amount + (ABS(V_IncDecAmount) * V_BidPriceIncDecInTimes))) THEN
+                BEGIN
+                    V_OutputStr := 'msg_aucbid_incdecintimes';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 17;
+                END;
+                ELSE IF (((V_StartPrice != 0 AND V_AuctionType = 2) OR (V_AuctionType = 1)) AND V_CheckBidPrice < V_StartPrice) THEN -- First bid condition = Auction Start Price and bid received less than start price?
+                BEGIN
+                    V_OutputStr := 'msg_aucbid_incrementstartpricecriteria';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 9;
+                END;
+                ELSE IF (V_IsFirstBid = 0 AND V_FirstBidCond = 1 AND V_CheckBidPrice >= V_StartPrice) THEN -- First bid condition = Auction Start Price?
+                BEGIN
+                    V_IsValidBid := 1;
+                END;
+                ELSE IF (V_CheckBidPrice >= (V_H1L1Amount + ABS(V_IncDecAmount))) THEN
+                BEGIN
+                    V_IsValidBid := 1;
+                    IF V_BidDate <= V_StartDate AND V_BidderId != V_SessionUserId THEN
+                    BEGIN
+                        SELECT V_Count = COUNT(1) FROM appauctionbid.tbl_AuctionBidRank
+                        WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND bidderId = V_BidderId AND isActive = 1;
+                        IF V_Count != 0 THEN
+                        BEGIN
+                            V_IsValidBid := 0;
+                        END;
+                    END;
+                END;
+                ELSE
+                BEGIN
+                    V_OutputStr := 'msg_aucbid_incrementcriteria';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 2;
+                END;
+
+                -- For CR:23766 To have check on minimum quantity required
+                IF V_AuctionResult = 2 AND V_isMinQtyChkReq = 1 THEN
+                BEGIN
+                    IF V_QtyBidPrice < V_minQtyBid THEN
+                    BEGIN
+                        V_OutputStr := 'msg_auc_bid_minqtycheck';
+                        V_IsValidBid := 0;
+                        V_RejectBidStatus := 15;
+                    END;
+                    ELSE IF V_QtyBidPrice > V_maxQtyBid THEN
+                    BEGIN
+                        V_OutputStr := 'msg_auc_bid_maxqtycheck';
+                        V_IsValidBid := 0;
+                        V_RejectBidStatus := 16;
+                    END;
+                END;
+
+                -- Add here emd validation check
+                IF (V_IsValidBid = 1 AND ((V_EvenTypeId = 1 AND V_IsEmdReq = 1 AND (V_IsBidCapacityReq = 1 OR V_IsBidCapacityReq = 2)) OR (V_EvenTypeId = 2 AND V_IsEmdReq = 1 AND V_IsBidCapacityReq = 2 AND V_IssecurityFees = 2 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1))) THEN -- If emd is enabled and Bid Capacity required as Yes or EMD wise and Auction is Forward or Reverse
+                BEGIN
+                    IF V_IsBidCapacityReq = 1 THEN
+                    BEGIN
+                        IF (V_CheckBidPrice / V_BiddingCapacity) > V_EmdBalance THEN
+                        BEGIN
+                            -- Reject bid because of EMD balance is sufficient with respect to bid
+                            V_OutputStr := 'msg_aucbid_emdinsufficient';
+                            V_IsValidBid := 0;
+                            V_RejectBidStatus := 21;
+                        END;
+                    END;
+                    -- Reject bid because of EMD balance is sufficient with respect to bid FOR V_IsBidCapacityReq == 2
+                    ELSE IF V_IsBidCapacityReq = 2 THEN
+                    BEGIN
+                        IF V_EmdBalance < V_ConfigEmdAmt THEN
+                        BEGIN
+                            V_OutputStr := 'msg_auc_payemd';
+                            V_IsValidBid := 0;
+                            V_RejectBidStatus := 21;
+                        END;
+                    END;
+                END;
+
+                -- Indrajit Maheshwari - EMD Rollout - Insufficient EMD Balance Check
+                IF (V_IsValidBid = 1 AND V_IsEmdReq = 2 AND V_isRestrictBidderOnl1h1EMD = 1 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1) THEN
+                BEGIN
+                    IF (V_EmdBalance < V_ConfigEmdAmt AND V_IsPvsH1Bidder != 1) THEN
+                        BEGIN
+                            V_OutputStr := 'msg_aucbid_insufficient_emd_balance';
+                            V_IsValidBid := 0;
+                            V_RejectBidStatus := 28;
+                    END;
+                END;
+                -- EMD Rollout - Insufficient EMD Balance Check END
+
+                -- If Auctrion is Item wise, Standard, Limited, IsRestrictH1Bidder is Yes and Bidder is Rank 1 in 1 Item
+                IF (V_AuctionResult = 2 AND V_AuctionType = 1 AND V_IsRestrictH1Bidder = 1 AND V_AuctionMode = 2 AND V_ItemH1Count = 1) THEN
+                BEGIN
+                    V_OutputStr := 'msg_auction_restrictH1Bidder';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 18;
+                END;
+
+                IF V_IsValidBid = 1 THEN -- IF bid is valid then check for multiple condition.
+                BEGIN
+                    V_OutputStr := 'msg_aucbid_success';
+                    V_IsValidBid := 1;
+                    V_RejectBidStatus := 0;
+                    IF (V_IncDecInMultiple = 1 AND (V_CheckBidPrice - V_H1L1Amount) % ABS(V_IncDecAmount) != 0) THEN -- multiple is yes AND Bid is not valid in multiple of criteria?
+                    BEGIN
+                        V_OutputStr := 'msg_aucbid_incrementmultiple';
+                        V_IsValidBid := 0;
+                        V_RejectBidStatus := 3;
+                    END;
+                END;
+            END;
+            ELSE IF (V_EvenTypeId = 2) THEN -- Reverse Auction
+            BEGIN
+                -- For Change Request #25679 - Increment/Decrement In times logic
+                IF (V_IncDecType = 1 AND V_IsBidPriceIncDecInTimesReq = 1 AND (V_CheckBidPrice < (V_H1L1Amount - (ABS(V_IncDecAmount) * V_BidPriceIncDecInTimes)))) THEN
+                BEGIN
+                    V_OutputStr := 'msg_aucbid_incdecintimes';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 17;
+                END;
+                ELSE IF (((V_StartPrice != 0 AND V_AuctionType = 2) OR (V_AuctionType = 1)) AND V_CheckBidPrice > V_StartPrice) THEN -- First bid condition = Auction Start Price and bid received greather than start price?
+                BEGIN
+                    V_OutputStr := 'msg_aucbid_decrementstartpricecriteria';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 9;
+                END;
+                ELSE IF (V_IsFirstBid = 0 AND V_FirstBidCond = 1 AND V_CheckBidPrice <= V_H1L1Amount) THEN -- First bid condition = Auction Start Price?
+                BEGIN
+                    V_IsValidBid := 1;
+                END;
+                ELSE IF (V_CheckBidPrice <= (V_H1L1Amount - ABS(V_IncDecAmount))) THEN
+                BEGIN
+                    V_IsValidBid := 1;
+                    IF (V_BidDate <= V_StartDate AND V_BidderId != V_SessionUserId) THEN
+                    BEGIN
+                        SELECT V_Count = COUNT(1) FROM appauctionbid.tbl_AuctionBidRank
+                        WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND bidderId = V_BidderId AND isActive = 1;
+                        IF V_Count != 0 THEN
+                        BEGIN
+                            V_IsValidBid := 0;
+                        END;
+                    END;
+                END;
+                ELSE
+                BEGIN
+                    V_OutputStr := 'msg_aucbid_decrementcriteria';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 2;
+                END;
+
+                -- For CR:23766 To have check on minimum quantity required
+                IF V_AuctionResult = 2 AND V_isMinQtyChkReq = 1 THEN
+                BEGIN
+                    IF V_QtyBidPrice < V_minQtyBid THEN
+                    BEGIN
+                        V_OutputStr := 'msg_auc_bid_minqtycheck';
+                        V_IsValidBid := 0;
+                        V_RejectBidStatus := 15;
+                    END;
+                    ELSE IF V_QtyBidPrice > V_maxQtyBid THEN
+                    BEGIN
+                        V_OutputStr := 'msg_auc_bid_maxqtycheck';
+                        V_IsValidBid := 0;
+                        V_RejectBidStatus := 16;
+                    END;
+                END;
+
+                -- Add here emd validation check
+                IF (V_IsValidBid = 1 AND ((V_EvenTypeId = 1 AND V_IsEmdReq = 1 AND (V_IsBidCapacityReq = 1 OR V_IsBidCapacityReq = 2)) OR (V_EvenTypeId = 2 AND V_IsEmdReq = 1 AND V_IsBidCapacityReq = 2 AND V_IssecurityFees = 2 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1))) THEN -- If emd is enabled and Bid Capacity required as Yes or EMD wise and Auction is Forward or Reverse
+                BEGIN
+                    IF V_IsBidCapacityReq = 1 THEN
+                    BEGIN
+                        IF (V_CheckBidPrice / V_BiddingCapacity) > V_EmdBalance THEN
+                        BEGIN
+                            -- Reject bid because of EMD balance is sufficient with respect to bid
+                            V_OutputStr := 'msg_aucbid_emdinsufficient';
+                            V_IsValidBid := 0;
+                            V_RejectBidStatus := 21;
+                        END;
+                    END;
+                    ELSE IF V_IsBidCapacityReq = 2 THEN
+                    BEGIN
+                        IF V_EmdBalance < V_ConfigEmdAmt THEN
+                        BEGIN
+                            V_OutputStr := 'msg_auc_payemd';
+                            V_IsValidBid := 0;
+                            V_RejectBidStatus := 21;
+                        END;
+                    END;
+                END;
+
+                -- Indrajit Maheshwari - EMD Rollout - Insufficient EMD Balance Check
+                IF (V_IsValidBid = 1 AND V_IsEmdReq = 2 AND V_isRestrictBidderOnl1h1EMD = 1 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1) THEN
+                BEGIN
+                    IF (V_EmdBalance < V_ConfigEmdAmt AND V_IsPvsH1Bidder != 1) THEN
+                        BEGIN
+                            V_OutputStr := 'msg_aucbid_insufficient_emd_balance';
+                            V_IsValidBid := 0;
+                            V_RejectBidStatus := 28;
+                    END;
+                END;
+                -- EMD Rollout - Insufficient EMD Balance Check END
+
+                -- If Auctrion is Item wise, Standard, Limited, IsRestrictH1Bidder is Yes and Bidder is Rank 1 in 1 Item
+                IF (V_AuctionResult = 2 AND V_AuctionType = 1 AND V_IsRestrictH1Bidder = 1 AND V_AuctionMode = 2 AND V_ItemH1Count = 1) THEN
+                BEGIN
+                    V_OutputStr := 'msg_auction_restrictH1Bidder';
+                    V_IsValidBid := 0;
+                    V_RejectBidStatus := 18;
+                END;
+
+                IF V_IsValidBid = 1 THEN -- IF bid is valid then check for multiple condition.
+                BEGIN
+                    V_OutputStr := 'msg_aucbid_success';
+                    V_IsValidBid := 1;
+                    V_RejectBidStatus := 0;
+                    IF (V_IncDecInMultiple = 1 AND (V_H1L1Amount - V_CheckBidPrice) % ABS(V_IncDecAmount) != 0) THEN -- multiple is yes AND Bid is not valid in multiple of criteria?
+                    BEGIN
+                        V_OutputStr := 'msg_aucbid_decrementmultiple';
+                        V_IsValidBid := 0;
+                        V_RejectBidStatus := 3;
+                    END;
+                END;
+            END;
+        END;
+    END;
+END;
+END IF;
+
+
+END;
+END IF;
+----5555 if condition 
+
+
+
+	 ELSE      --1st if condition else
+	  BEGIN
+      -- SET V_OutputStr, V_IsValidBid, and V_RejectBidStatus variables
+      V_OutputStr := 'msg_aucbid_zerobid';
+      V_IsValidBid := 0;
+      V_RejectBidStatus := 4;
+      END;
+
+	 END IF;  --1st if condition end 
+
+----start herer
+IF(V_RejectBidStatus NOT IN (5,6,7,8,11,14,99))
+begin 
+
+-- Take existing rank of bidder for extension check condition
+IF V_RankForExt > 0 THEN
+    SELECT bidderRank INTO V_OldRank FROM appauctionbid.tbl_AuctionBidRank 
+    WHERE bidderId = V_BidderId AND rowId = V_RowId 
+    AND tableId = V_TableId AND auctionId = V_AuctionId AND isActive = 1;
+END IF;
+
+IF V_BiddingType = 2 AND V_BidderCurrencyId != V_BaseCurrencyId THEN -- FOR ICB - If Bidder's currency is not same as auction base currency?
+    SELECT appauction.F_CurrencyConvertion(V_BidPrice, V_BidderCurrencyId, V_BaseCurrencyId, V_BaseCurrencyId, V_AuctionId, V_DecimalValueUpto, V_EvenTypeId, 0) INTO V_CheckBidPrice;
+END IF;
+
+
+IF (V_BIDtype = 0 ) THEN
+BEGIN
+-- Make entry into bid tables
+-- Making entry for tbl_AucitonBid
+INSERT INTO appauctionbid.tbl_AuctionBid
+(auctionId, bidderId, userDetailId, tableId, rowId, bidPrice, bidderBidPrice, ipAddress, isAutoBid, submittedBy, submittedOn, isApproved, rejectStatus)
+VALUES
+(V_AuctionId, V_BidderId, V_UserDetailId, V_TableId, V_RowId, V_CheckBidPrice, V_BidPrice, V_IPAddress, V_BidType, V_SessionUserId, V_BidDate, V_IsValidBid, V_RejectBidStatus)
+RETURNING bidId INTO V_BidId;
+
+IF(V_IsValidBid = 1 AND V_BidId !=  0) /* IF Valid bid then make enty into AuctionBidRank  */
+BEGIN
+
+-- Make entry in rank table if auction is both and @V_IsDisplayL1ItemWiseAndGTWise
+SELECT COUNT(*) INTO V_Count
+FROM appauctionbid.tbl_AuctionBidRank
+WHERE auctionId = V_AuctionId
+  AND tableId = V_TableId
+  AND rowId = V_RowId
+  AND bidderId = V_BidderId;
+
+
+IF V_Count = 0 THEN
+
+    IF V_AuctionResult = 3 THEN
+        V_DelimIndex := POSITION(',' IN V_TempCheckBidAmtStr);
+        WHILE V_TempCheckBidAmtStr <> '' LOOP
+            IF V_DelimIndex != 0 THEN
+                V_TempBidPrice := CAST(SUBSTRING(V_TempCheckBidAmtStr FROM 1 FOR V_DelimIndex) AS DECIMAL(20,5));
+                V_TempCheckBidAmtStr := SUBSTRING(V_TempCheckBidAmtStr FROM V_DelimIndex + 1);
+            ELSE
+                V_TempBidPrice := CAST(V_TempCheckBidAmtStr AS DECIMAL(20,5));
+                V_TempCheckBidAmtStr := '';
+            END IF;
+
+            IF V_BiddingType = 2 AND V_BidderCurrencyId != V_BaseCurrencyId THEN
+                SELECT appauction.F_CurrencyConvertion(V_TempBidPrice, V_BidderCurrencyId, V_BaseCurrencyId, V_BaseCurrencyId, V_AuctionId, V_DecimalValueUpto, V_EvenTypeId, 0) INTO V_TempBidPrice;
+            END IF;
+
+            INSERT INTO appauctionbid.tbl_AuctionBidRank 
+            (auctionId, bidderId, tableId, rowId, bidId, bidPrice, bidQty, qtyAllocated, bidderRank, submittedOn, submittedBy, isActive)
+            VALUES
+            (V_AuctionId, V_BidderId, V_TableId, V_TempRowId, V_BidId, V_TempBidPrice, 0, 0, 1, V_BidDate, V_SessionUserId, 1);
+
+            V_TempRowId := V_TempRowId + 1;
+            V_DelimIndex := POSITION(',' IN V_TempCheckBidAmtStr);
+        END LOOP;
+    END IF;
+
+    INSERT INTO appauctionbid.tbl_AuctionBidRank
+    (auctionId, bidderId, tableId, rowId, bidId, bidPrice, bidderRank, submittedOn, submittedBy, isActive)
+    VALUES
+    (V_AuctionId, V_BidderId, V_TableId, V_RowId, V_BidId, V_CheckBidPrice, 1, V_BidDate, V_SessionUserId, 1);
+
+ELSE
+
+    IF V_AuctionResult = 3 THEN
+        V_DelimIndex := POSITION(',' IN V_CheckBidAmtStr);
+        WHILE V_TempCheckBidAmtStr <> '' LOOP
+            IF V_DelimIndex != 0 THEN
+                V_TempBidPrice := CAST(SUBSTRING(V_TempCheckBidAmtStr FROM 1 FOR V_DelimIndex) AS DECIMAL(20,5));
+                V_TempCheckBidAmtStr := SUBSTRING(V_TempCheckBidAmtStr FROM V_DelimIndex + 1);
+            ELSE
+                V_TempBidPrice := CAST(V_TempCheckBidAmtStr AS DECIMAL(20,5));
+                V_TempCheckBidAmtStr := '';
+            END IF;
+
+            IF V_BiddingType = 2 AND V_BidderCurrencyId != V_BaseCurrencyId THEN
+                SELECT appauction.F_CurrencyConvertion(V_TempBidPrice, V_BidderCurrencyId, V_BaseCurrencyId, V_BaseCurrencyId, V_AuctionId, V_DecimalValueUpto, V_EvenTypeId, 0) INTO V_TempBidPrice;
+            END IF;
+
+            UPDATE appauctionbid.tbl_AuctionBidRank
+            SET bidPrice = V_TempBidPrice, bidId = V_BidId, submittedBy = V_SessionUserId, isActive = 1, submittedOn = V_BidDate
+            WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_TempRowId AND bidderId = V_BidderId;
+
+            V_TempRowId := V_TempRowId + 1;
+            V_DelimIndex := POSITION(',' IN V_TempCheckBidAmtStr);
+        END LOOP;
+    END IF;
+
+    UPDATE appauctionbid.tbl_AuctionBidRank
+    SET bidPrice = V_CheckBidPrice, bidId = V_BidId, submittedBy = V_SessionUserId, isActive = 1, submittedOn = V_BidDate
+    WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND bidderId = V_BidderId;
+
+END IF;
+
+
+SELECT COUNT(*) INTO V_Count FROM appauctionbid.tbl_AuctionBidRank  
+WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND isActive = 1;
+
+IF V_EvenTypeId = 1 THEN -- Forward auction
+    V_QueryStr := 'UPDATE appauctionbid.tbl_AuctionBidRank AS T ' ||
+                   'SET bidderRank = S.bidderRank ' ||
+                   'FROM ' ||
+                   '( ' ||
+                       'SELECT bidRankId, bidderId, bidPrice, ROW_NUMBER() OVER (ORDER BY bidPrice DESC, submittedOn ASC, bidId ASC) AS bidderRank ' ||
+                       'FROM appauctionbid.tbl_AuctionBidRank ' ||
+                       'WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND isActive = 1 ' ||
+                       'ORDER BY bidPrice DESC, submittedOn ASC, bidId ASC ' ||
+                       'LIMIT ' || V_Count ||
+                   ') AS S ' ||
+                   'WHERE T.bidRankId = S.bidRankId;';
+ELSE -- Reverse Auction
+    V_QueryStr := 'UPDATE appauctionbid.tbl_AuctionBidRank AS T ' ||
+                   'SET bidderRank = S.bidderRank ' ||
+                   'FROM ' ||
+                   '( ' ||
+                       'SELECT bidRankId, bidderId, bidPrice, ROW_NUMBER() OVER (ORDER BY bidPrice ASC, submittedOn ASC, bidId ASC) AS bidderRank ' ||
+                       'FROM appauctionbid.tbl_AuctionBidRank ' ||
+                       'WHERE auctionId = V_AuctionId AND tableId = V_TableId AND rowId = V_RowId AND isActive = 1 ' ||
+                       'ORDER BY bidPrice ASC, submittedOn ASC, bidId ASC ' ||
+                       'LIMIT ' || V_Count ||
+                   ') AS S ' ||
+                   'WHERE T.bidRankId = S.bidRankId;';
+END IF;
+
+-- Print the query string for debugging
+RAISE NOTICE '%', V_QueryStr;
+
+-- Execute the dynamic SQL query
+EXECUTE V_QueryStr;
+
+
+IF V_AuctionResult = 3 THEN
+    V_DelimIndex := POSITION(',' IN V_CheckBidAmtStr);
+    V_TempCheckBidAmtStr := V_CheckBidAmtStr;
+    V_TempRowId := 1;
+
+    WHILE V_TempCheckBidAmtStr !=  '' LOOP
+        IF V_DelimIndex != 0 THEN
+            V_TempBidPrice := CAST(SUBSTRING(V_TempCheckBidAmtStr FROM 1 FOR V_DelimIndex) AS DECIMAL(20,5));
+            V_TempCheckBidAmtStr := SUBSTRING(V_TempCheckBidAmtStr FROM V_DelimIndex + 1);
+        ELSE
+            V_TempBidPrice := CAST(V_TempCheckBidAmtStr AS DECIMAL(20,5));
+            V_TempCheckBidAmtStr := '';
+        END IF;
+
+        EXECUTE V_QueryStr USING V_Count, V_AuctionId, V_TableId, V_TempRowId;
+
+        V_TempRowId := V_TempRowId + 1;
+        V_DelimIndex := POSITION(',' IN V_TempCheckBidAmtStr);
+    END LOOP;
+END IF;
+
+
+ IF(V_EvenTypeId = 1 AND V_IsEmdReq = 1 AND V_IsBidCapacityReq = 1) THEN
+    
+        -- If standard and forward auction with emd as yes then EMD insert emd utilise entry
+        V_EmdBalance := V_EmdBalance - (V_CheckBidPrice / V_BiddingCapacity);
+        INSERT INTO appauction.tbl_EmdUtilise (emdId, emdAmtUsed, emdBalance, createdOn, createdBy, updatedOn, updatedBy, status)
+        VALUES (V_EmdBalId, (V_CheckBidPrice / V_BiddingCapacity), V_EmdBalance, V_BidDate, V_SessionUserId, V_BidDate, V_SessionUserId, 1);
+
+        -- Get All H1 Bidder Ids
+        FOR V_bidderIdEmd IN
+            SELECT DISTINCT bidderId FROM appauctionbid.tbl_AuctionBidRank WHERE auctionId = V_AuctionId AND isActive = 1
+        LOOP
+            -- Get Total H1 Bid Price of H1 Bidder
+            SELECT COALESCE(SUM(bidPrice), 0) INTO V_totalH1Bid FROM appauctionbid.tbl_AuctionBidRank 
+            WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd AND isActive = 1 AND bidderRank = 1;
+
+            -- Update Emd balance of H1 Bidder - Start
+            IF (V_totalH1Bid != 0) THEN
+                V_EmdUsed := ROUND(V_totalH1Bid / V_BiddingCapacity, V_DecimalValueUpto);
+                UPDATE appauction.tbl_EmdBalance SET emdBalance = (emdAmount - V_EmdUsed), updatedOn = V_BidDate, updatedBy = V_SessionUserId 
+                WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd;
+            ELSE
+                UPDATE appauction.tbl_EmdBalance SET emdBalance = emdAmount, updatedOn = V_BidDate, updatedBy = V_SessionUserId  
+                WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd;
+            END IF;
+            -- Update Emd balance of H1 Bidder - End
+        END LOOP;
+
+    ELSIF ((V_EvenTypeId = 1 AND V_IsEmdReq = 1 AND V_IsBidCapacityReq = 2) OR (V_EvenTypeId = 2 AND V_IsEmdReq = 1 AND V_IsBidCapacityReq = 2 AND V_IssecurityFees = 2 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1)) THEN
+
+        SELECT COUNT(*) INTO V_H2bidder FROM appauctionbid.tbl_AuctionBidRank WHERE auctionId = V_AuctionId AND isActive = 1 AND bidderRank = 2 AND rowId = V_RowId;
+        
+        -- If standard and forward auction with emd as yes then EMD insert emd utilise entry
+        V_EmdBalance := (V_EmdBalance - V_ConfigEmdAmt);
+        INSERT INTO appauction.tbl_EmdUtilise (emdId, emdAmtUsed, emdBalance, createdOn, createdBy, updatedOn, updatedBy, status)
+        VALUES (V_EmdBalId, V_ConfigEmdAmt, V_EmdBalance, V_BidDate, V_SessionUserId, V_BidDate, V_SessionUserId, 1);
+        
+        -- Get All H1 Bidder Ids
+        FOR V_bidderIdEmd IN
+            SELECT DISTINCT bidderId FROM appauctionbid.tbl_AuctionBidRank WHERE auctionId = V_AuctionId AND isActive = 1 AND rowId = V_RowId
+        LOOP
+            -- Get EMD Balance, Amount and Rank of all bidders in cursor
+            SELECT emdBalance, emdAmount INTO V_EmdBalance, V_EmdAmount FROM appauction.tbl_EmdBalance WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd;
+            SELECT COUNT(*) INTO V_IsRankExits FROM appauctionbid.tbl_AuctionBidRank WHERE auctionId = V_AuctionId AND isActive = 1 AND bidderRank > 2 AND rowId = V_RowId AND bidderId = V_bidderIdEmd;
+            SELECT COUNT(*) INTO V_totalH1Bid FROM appauctionbid.tbl_AuctionBidRank 
+            WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd AND isActive = 1 AND bidderRank = 1 AND rowId = V_RowId;
+
+            -- Update Emd balance of H1 Bidder - Start
+            IF (V_totalH1Bid != 0) THEN
+                -- Allow bidder to bid if it's 1st time or not H1 of particular Item
+                IF (V_IsPvsH1Bidder != 1 AND V_bidderIdEmd = V_BidderId) THEN
+                    UPDATE appauction.tbl_EmdBalance SET emdBalance = (emdBalance - V_ConfigEmdAmt), updatedOn = V_BidDate, updatedBy = V_SessionUserId 
+                    WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd;
+                ELSE
+                    EXIT;
+                END IF;
+            ELSIF (V_bidderIdEmd != V_BidderId AND V_H2bidder = 1 AND V_IsPvsH1Bidder = 0 AND ((V_EmdBalance + V_ConfigEmdAmt) <= V_EmdAmount) AND V_IsRankExits <> 1) THEN
+                -- Give return amount of H2 Bidder
+                UPDATE appauction.tbl_EmdBalance SET emdBalance = (emdBalance + V_ConfigEmdAmt), updatedOn = V_BidDate, updatedBy = V_SessionUserId 
+                WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd;
+            END IF;
+            -- Update Emd balance of H1 Bidder - End
+        END LOOP;
+
+    END IF;
+    RAISE NOTICE '%', v_isAutoBidAllowed;
+
+	-- Update EMD Balance of all bidders If emd is enabled and if auction is standard - End
+    IF v_isAutoBidAllowed = 1 THEN
+        -- Auto bid allowed
+        PERFORM appauctionbid.p_AutoBid(v_AuctionId, V_TableId, V_RowId, V_IPAddress, V_SessionUserId, V_UserDetailId, V_BidDate, V_CalledFrom, V_IsValidAutoBid);
+    END IF;
+
+    -- Indrajit Maheshwari - EMD Rollout - Update EMD Balance of all bidders If Auction & EMD is Itemwise and Restrict Bidder On L1/H1 EMD is Yes and EMD Payment Mode is Online(PG)
+    IF (V_IsValidBid = 1 AND V_IsEmdReq = 2 AND V_isRestrictBidderOnl1h1EMD = 1 AND V_AuctionResult = 2 AND V_emdPaymentMode = 1) THEN
+        SELECT COUNT(*) INTO V_H2bidder FROM appauctionbid.tbl_AuctionBidRank WHERE auctionId = V_AuctionId AND isActive = 1 AND bidderRank = 2 AND rowId = V_RowId;
+
+        -- If standard and forward auction with emd as yes then EMD insert emd utilise entry
+        V_EmdBalance := V_EmdBalance - V_ConfigEmdAmt;
+
+        -- Get All H1 Bidder Ids
+        FOR V_bidderIdEmd IN
+            SELECT DISTINCT(bidderId) FROM appauctionbid.tbl_AuctionBidRank WHERE auctionId = V_AuctionId AND isActive = 1 AND rowId = V_RowId
+        LOOP
+            -- Get EMD Balance, Amount and Rank of all bidders in cursor
+            SELECT emdBalance, emdAmount INTO V_EmdBalance, V_EmdAmount FROM appauction.tbl_EmdBalance WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd;
+            SELECT COUNT(*) INTO V_IsRankExits FROM appauctionbid.tbl_AuctionBidRank WHERE auctionId = V_AuctionId AND isActive = 1 AND bidderRank > 2 AND rowId = V_RowId AND bidderId = V_bidderIdEmd;
+            SELECT COUNT(*) INTO V_totalH1Bid FROM appauctionbid.tbl_AuctionBidRank WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd AND isActive = 1 AND bidderRank = 1 AND rowId = V_RowId;
+
+            -- Update Emd balance of H1 Bidder - Start
+            IF (V_totalH1Bid != 0) THEN
+                -- Allow bidder to bid if it's 1st time or not H1 of particular Item
+                IF (V_IsPvsH1Bidder != 1 AND V_bidderIdEmd = V_BidderId) THEN
+                    INSERT INTO appauction.tbl_EmdUtilise (emdId, emdAmtUsed, emdBalance, createdOn, createdBy, updatedOn, updatedBy, status)
+                    VALUES (V_EmdBalId, V_ConfigEmdAmt, V_EmdBalance, V_BidDate, V_SessionUserId, V_BidDate, V_SessionUserId, 1);
+
+                    UPDATE appauction.tbl_EmdBalance SET emdBalance = (emdBalance - V_ConfigEmdAmt), updatedOn = V_BidDate, updatedBy = V_SessionUserId 
+                    WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd;
+                ELSE
+                    EXIT;
+                END IF;
+            ELSE
+                -- Give return amount of H2 Bidder
+                -- EMDBalanceBidderID != BidBidderId and H2Bidder exists and BidBidder is not previous H1 Bidder AND (total emd balance+item emd <= bidder total emd amount and rank > 2 not exists)
+                IF (V_bidderIdEmd != V_BidderId AND V_H2bidder = 1 AND V_IsPvsH1Bidder = 0 AND ((V_EmdBalance + V_ConfigEmdAmt) <= V_EmdAmount) AND V_IsRankExits <> 1) THEN
+                    INSERT INTO appauction.tbl_EmdUtilise (emdId, emdAmtUsed, emdBalance, createdOn, createdBy, updatedOn, updatedBy, status)
+                    VALUES (V_EmdBalId, V_ConfigEmdAmt, V_EmdBalance, V_BidDate, V_SessionUserId, V_BidDate, V_SessionUserId, 1);
+                    
+                    UPDATE appauction.tbl_EmdBalance SET emdBalance = (emdBalance + V_ConfigEmdAmt), updatedOn = V_BidDate, updatedBy = V_SessionUserId 
+                    WHERE auctionId = V_AuctionId AND bidderId = V_bidderIdEmd;
+                END IF;
+            END IF;
+            -- Update Emd balance of H1 Bidder - End
+        END LOOP;
+    END IF;
+
+END;
+END IF;
+
+-- Making entry for tbl_AuctionBidDetail
+EXECUTE @V_BidDetailStr USING V_BidId;
+
+END;
+END IF;
+
+
+-- IF IsValidBid and AUTO BID OUTBIDDED - Indrajit Maheshwari - START
+    SELECT DEPT.clientId INTO V_ClientID FROM appauction.tbl_Auction AC INNER JOIN appclient.tbl_Department DEPT ON AC.deptId = DEPT.deptId WHERE AC.auctionId = @V_AuctionId;
+    BEGIN
+        IF V_IsValidBid = 1 THEN
+            -- Get All H2 Bidder Ids with Auto Bid
+            FOR V_bidderIdEmd IN
+                SELECT DISTINCT ABR.bidderId, AB.initialPrice, AB.bestPrice, AB.updatedOn 
+                FROM appauctionbid.tbl_AuctionBidRank ABR 
+                INNER JOIN appauctionbid.tbl_AutoBid AB ON ABR.auctionId = AB.auctionId AND ABR.bidderId = AB.bidderId AND ABR.rowId = AB.rowId
+                WHERE ABR.auctionId = @V_AuctionId AND ABR.isActive = 1 AND bidderRank = 2 AND ABR.rowId = @V_RowId
+            LOOP
+                SELECT loginid INTO V_EmailId FROM appuser.tbl_UserLogin WHERE userId = V_bidderIdEmd.bidderId;
+
+                SELECT DMC.subject, DMC.messageSubject, REPLACE(CONVERT(TEXT, DMC.mailContent), '$emailId', V_EmailId) || CONVERT(TEXT, DMC.signature), 
+                       REPLACE(CONVERT(TEXT, DMC.messageContent), '$emailId', V_EmailId) || CONVERT(TEXT, DMC.signature), DMC.fromId, DMC.linkId   
+                INTO V_Subject, V_MsgBoxSubject, V_Body, V_MsgBoxBody, V_FromAddress, V_LinkId   
+                FROM appmaster.tbl_DynMailContent DMC WHERE DMC.mailTemplateId = 434;
+
+                -- Construct table contents
+                V_TableContents := '<br>
+                    <table border="1" cellpadding="1" cellspacing="1">
+                    <tr>
+                        <th>Sr. No.</th>
+                        <th>Auction ID</th>
+                        <th>';
+                IF V_AuctionResult = 2 THEN
+                    V_TableContents := V_TableContents || 'Item Name';
+                ELSE
+                    V_TableContents := V_TableContents || 'Auction Brief';
+                END IF;
+                V_TableContents := V_TableContents || '
+                        </th>
+                        <th>Configured Auto Bid Amount</th>
+                        <th>Date and Time of Configured Auto Bid</th>
+                    </tr>';
+
+                IF V_AuctionResult = 2 THEN
+                    SELECT tblauctioncell.cellValue INTO V_ItemName
+                    FROM appauction.tbl_AuctionTable tblauctiontable 
+                    INNER JOIN appauction.tbl_AuctionColumn tblauctioncolumn ON tblauctiontable.tableId = tblauctioncolumn.tableId AND tblauctioncolumn.columnTypeId = 1 
+                    INNER JOIN appauction.tbl_AuctionCell tblauctioncell ON tblauctioncell.columnId = tblauctioncolumn.columnId
+                    WHERE tblauctiontable.auctionId = @V_AuctionId AND tblauctioncell.rowId = @V_RowId AND tblauctiontable.cstatus = 1 
+                    ORDER BY tblauctioncell.rowId;
+                ELSE
+                    V_ItemName := V_ItemName || @V_AuctionBrief;
+                END IF;
+
+                IF V_EvenTypeId = 1 THEN
+                    V_TableLimits := V_TableLimits + V_UpperLimit;
+                ELSE
+                    V_TableLimits := V_TableLimits + V_LowerLimit;
+                END IF;
+
+                V_TableContents := V_TableContents || '
+                    <tr>
+                        <td>1</td>
+                        <td>' || CAST(@V_AuctionId AS VARCHAR(10)) || '</td>
+                        <td>' || V_ItemName || '</td>
+                        <td>' || CAST(V_TableLimits AS VARCHAR(50)) || '</td>
+                        <td>' || appmaster.F_ToDateTime(V_AutoBidConfigOn, '+05:30', '103') || '</td>
+                    </tr>';
+
+                V_TableContents := V_TableContents || '</table>';
+
+                V_Body := REPLACE(V_Body, '$TableDetails', V_TableContents);
+                V_Subject := REPLACE(V_Subject, '$EventID', CAST(@V_AuctionId AS VARCHAR(10)));
+
+                -- Send mail to bidder to notify about his outbid for Auto Bid configured
+                PERFORM pg_catalog.pg_send_mail(V_EmailId, V_Subject, V_Body);
+
+                -- Insert data into tbl_AlertHistory
+                INSERT INTO appreport.tbl_AlertHistory(alertType, alertId, linkId, alertFrom, alertTo, subject, sentDate, clientId) 
+                VALUES (1, NEWID(), V_LinkId, V_FromAddress, V_EmailId, V_Subject, CURRENT_TIMESTAMP, V_ClientID);
+
+                FETCH NEXT FROM CurAutoCalc INTO V_BidderIdAutoBid, V_LowerLimit, V_UpperLimit, V_AutoBidConfigOn;
+            END LOOP;
+            CLOSE CurAutoCalc;
+        END IF;
+    EXCEPTION
+        WHEN others THEN
+            -- Log exception
+            INSERT INTO appreport.tbl_ExceptionLog(errorMessage, linkId, fileName, className, method, lineNumber, createdOn, createdBy)
+            VALUES (coalesce(SQLERRM, '-'), 0, 'p_BidSubmission', '-', 'AutoBid Outbided Notification', ERROR_LINE(), CURRENT_TIMESTAMP, 0);
+    END;
+
+
+
+	 -- Step:7 In case of Valid bid then Check any Extension Need to be triggered
+    IF V_IsValidBid = 1 AND V_RankForExt > 0 THEN
+        SELECT bidderRank INTO V_Count FROM appauctionbid.tbl_AuctionBidRank WHERE bidderId = V_BidderId 
+        AND rowId = V_RowId AND tableId = V_TableId AND auctionId = V_AuctionId AND isActive = 1;
+    END IF;
+    
+    SELECT endDateVirtual, currentExt, rankForExt, extendBy, extendWhen, totalExt 
+    INTO V_EndDateVirtual, V_CurrentExt, V_RankForExt, V_ExtendBy, V_ExtendWhen, V_TotalExt 
+    FROM appauction.tbl_Auction WHERE auctionId = V_AuctionId;
+    
+    IF V_IsItemWiseTime = 1 THEN -- If Item wise time required = Yes
+        SELECT endDateVirtual, isAutoExt, extMode, extendBy, extendWhen, totalExt, currentExt
+        INTO V_EndDateVirtual, V_IsAutoExt, V_ExtMode, V_ExtendBy, V_ExtendWhen, V_TotalExt, V_CurrentExt
+        FROM appauction.tbl_AuctionCriteria WHERE auctionId = V_AuctionId AND rowId = V_RowId;
+    END IF;
+
+
+	IF (V_IsValidBid = 1 AND V_IsAutoExt = 1 AND (V_RankForExt = 0 OR (V_Count <= V_RankForExt AND V_OldRank != V_Count)) AND (V_BidDate BETWEEN (V_EndDateVirtual - INTERVAL '1 minute' * V_ExtendWhen) AND V_EndDateVirtual)) THEN
+        IF (V_ExtMode = 1 AND V_CurrentExt >= V_TotalExt) THEN -- IF limited extension and all extensions are finished
+            RAISE NOTICE 'All extensions are finished';
+        ELSE
+            IF (V_ExtMode = 1) THEN -- Fixed Extension
+                V_EndDateVirtual := V_EndDateVirtual + INTERVAL '1 minute' * V_ExtendBy;
+            ELSIF (V_ExtMode = 2) THEN -- Unlimited Extension
+                V_EndDateVirtual := V_BidDate + INTERVAL '1 minute' * V_ExtendBy;
+            END IF;
+
+            IF (V_AuctionResult = 2 AND V_IsItemWiseTime = 1 AND V_configureTimeForItem != 2) THEN -- If Item wise time required = Yes and Not Serial Auction
+                SELECT extMode, totalExt, currentExt INTO V_ExtMode, V_TotalExt, V_CurrentExt
+                FROM appauction.tbl_AuctionCriteria
+                WHERE auctionId = V_AuctionId AND rowId = V_RowId;
+
+                UPDATE appauction.tbl_AuctionCriteria
+                SET endDateVirtual = V_EndDateVirtual,
+                    currentExt = CASE WHEN (V_ExtMode = 1 AND currentExt < totalExt AND V_CurrentExt = currentExt) THEN (V_CurrentExt + 1)
+                                     ELSE CASE WHEN (V_ExtMode = 2) THEN V_CurrentExt + 1 END END
+                WHERE auctionId = V_AuctionId AND rowId = V_RowId;
+
+                SELECT MAX(endDateVirtual) INTO V_EndDateVirtualTemp FROM appauction.tbl_AuctionCriteria
+                WHERE auctionId = V_AuctionId
+                GROUP BY auctionId;
+
+                UPDATE appauction.tbl_Auction
+                SET endDateVirtual = V_EndDateVirtualTemp
+                WHERE auctionId = V_AuctionId;
+            ELSIF (V_AuctionResult = 2 AND V_IsItemWiseTime = 1 AND V_configureTimeForItem = 2) THEN -- If Item wise time required = Yes and Serial Auction
+                SELECT extMode, totalExt, currentExt INTO V_ExtMode, V_TotalExt, V_CurrentExt
+                FROM appauction.tbl_AuctionCriteria WHERE auctionId = V_AuctionId AND rowId = V_RowId;
+
+                SELECT endDateVirtual INTO V_SerialEndDateVirtual FROM appauction.tbl_Auction
+                WHERE auctionId = V_AuctionId;
+
+                IF (V_ExtMode = 1) THEN -- Fixed Extension
+                    V_SerialEndDateVirtual := V_SerialEndDateVirtual + INTERVAL '1 minute' * V_ExtendBy;
+                ELSIF (V_ExtMode = 2) THEN -- Unlimited Extension
+                    V_SerialEndDateVirtual := V_BidDate + INTERVAL '1 minute' * V_ExtendBy;
+                END IF;
+
+                UPDATE appauction.tbl_AuctionCriteria
+                SET endDateVirtual = V_EndDateVirtual,
+                    currentExt = CASE WHEN (V_ExtMode = 1 AND currentExt < totalExt AND V_CurrentExt = currentExt) THEN (V_CurrentExt + 1)
+                                     ELSE CASE WHEN (V_ExtMode = 2) THEN V_CurrentExt + 1 END END
+                WHERE auctionId = V_AuctionId AND rowId = V_RowId;
+
+                UPDATE appauction.tbl_Auction
+                SET endDateVirtual = V_SerialEndDateVirtual
+                WHERE auctionId = V_AuctionId;
+            ELSE
+                SELECT extMode, currentExt, totalExt INTO V_ExtMode, V_CurrentExt, V_TotalExt
+                FROM appauction.tbl_Auction WHERE auctionId = V_AuctionId;
+
+                UPDATE appauction.tbl_AuctionCriteria
+                SET endDateVirtual = V_EndDateVirtual,
+                    currentExt = CASE WHEN (V_ExtMode = 1 AND currentExt < totalExt AND V_CurrentExt = currentExt) THEN (V_CurrentExt + 1)
+                                     ELSE CASE WHEN (V_ExtMode = 2) THEN V_CurrentExt + 1 END END
+                WHERE auctionId = V_AuctionId;
+
+                UPDATE appauction.tbl_Auction
+                SET endDateVirtual = V_EndDateVirtual,
+                    currentExt = CASE WHEN (V_ExtMode = 1 AND currentExt < totalExt AND V_CurrentExt = currentExt) THEN (V_CurrentExt + 1)
+                                     ELSE CASE WHEN (V_ExtMode = 2) THEN V_CurrentExt + 1 END END
+                WHERE auctionId = V_AuctionId;
+            END IF;
+        END IF;
+    END IF;
+
+
+
+END;
+END IF;
+SELECT V_bidSubmittedDate = V_BidDate;
+----start herer end
+
+
+	END; --2nd begin end
+END;--first begin end 
+$$ LANGUAGE plpgsql;
