@@ -1,46 +1,37 @@
-print('List of GK Questions for Class 5 with Answers')
+print('Welcome to Kaun Banega Crorepati')
 
 name = input("Please tell me your name: ")
 age = input("Please tell me your age: ")
 
 if int(age) > 15:
-    print('Welcome to Kaun Banega Crorepati MR.', name)
+    print('Welcome to Kaun Banega Crorepati MR/MS.', name)
 else:
     print("Thanks for visiting the Kaun Banega Crorepati.")
 
+# Define questions and answers in a dictionary
+questions_answers = {
+    'Which is the folk dance of Assam?': 'Bihu is the folk dance of Assam.',
+    'How many Union Territories are there in India?': 'There are 8 Union Territories in India (Ladakh, Jammu & Kashmir, Puducherry, Lakshadweep, Delhi, Chandigarh, Dadra and Nagar Haveli and Daman & Diu, Andaman and Nicobar Islands).',
+    'Which city is also known as the “Pearl City”?': 'Hyderabad is also known as the “Pearl City”.',
+    'The Victoria Memorial is located in which city?': 'The Victoria Memorial is located in Kolkata.',
+    'Which is the brightest planet in the solar system?': 'Venus is the brightest planet in the solar system.'
+}
+result  = 0
+# Iterate over each question and ask the user for an answer
+for question, answer in questions_answers.items():
+    print(f"\nYour Question is :\n {question}")
+    user_answer = input("Enter your Answer here : ")
 
-Q1 =  'Which is the folk dance of Assam?'
-A1 =  'Bihu is the folk dance of Assam.'
-
-Q2 = 'How many Union Territories are there in India?'
-A2 =  'There are 8 Union Territories in India (Ladakh, Jammu & Kashmir, Puducherry, Lakshadweep, Delhi, Chandigarh, Dadra and Nagar Haveli and Daman & Diu, Andaman and Nicobar Islands).'
-
-Q3 = 'Which city is also known as the “Pearl City”?'
-A3 = 'Hyderabad is also known as the “Pearl City”.'
-
-Q4 = 'The Victoria Memorial is located in which city?'
-A4 = 'The Victoria Memorial is located in Kolkata.'
-
-Q5 = 'Which is the brightest planet in the solar system?'
-A5 = 'Venus is the brightest planet in the solar system.'
-
-
-
-
-for i in [Q1,Q2,Q3,Q4,Q5] :
-    # print (i)
-    print(f"Your Question is :\n {i}")
-    answer = input("Enter your Answer here : ")
-    for ans in A1 :
-        print("Right Answer.")
+    # Check if the user's answer matches the correct answer
+    if user_answer in answer:
+        print("Correct Answer!")
+        result = result + 1
     else:
-        print("Wrong Answer.")
-            
+        print("Incorrect Answer!")
+        result = result - 1
+
+if result < 0:
+    result = 0        
+print(" \n \n Hi ",name ," \n your Score is :",result)
         
-    
-
-
-
-
-
 
